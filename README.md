@@ -1,6 +1,9 @@
 # Generate DbContext class
 Generate DbContext class for EntityFramework by analyzing the SQL table schema.
+
 It will generate navigation properties based on foreign key.
+
+For more detail, please read this post: https://doxakis.com/2015/12/15/SQL-Script-DbContext/
 
 ## Customization:
 - You can change the table suffix.
