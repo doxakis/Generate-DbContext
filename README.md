@@ -16,4 +16,4 @@ For more detail, please read this post: https://doxakis.com/2015/12/15/SQL-Scrip
 - Most data type are supported.
 
 ## Copyright and license
-Code released under the MIT licence.
+Code released under the MIT license.
