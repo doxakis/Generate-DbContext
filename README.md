@@ -1,5 +1,5 @@
-# Generate-DbContext
-Generate DbContext for EntityFramework by analyzing the SQL table schema.
+# Generate DbContext class
+Generate DbContext class for EntityFramework by analyzing the SQL table schema.
 It will generate navigation properties based on foreign key.
 
 ## Customization:
