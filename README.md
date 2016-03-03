@@ -13,8 +13,8 @@ For more detail, please read this post: https://doxakis.com/2015/12/15/SQL-Scrip
 
 ## Conventions:
 Foreign key:
-- Linked[table name] (one to many)
-- [field name without "Id" term] (many to one)
+- "Linked" + table name (one to many)
+- field name without "Id" term (many to one)
 
 ## Limitations:
 - Table primary key are: TableName + Id or Id
