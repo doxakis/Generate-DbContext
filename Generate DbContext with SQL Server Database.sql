@@ -39,13 +39,18 @@ Limitations:
 */
 
 -- Options:
-DECLARE @tableSuffix VARCHAR(10) = 'Model'
--- Context name (By default: Database name if not specified)
+DECLARE @tableSuffix VARCHAR(50) = 'Model' -- Ex: table Product -> class ProductModel
+DECLARE @dbSetSuffix VARCHAR(50) = ''
 DECLARE @ContextName VARCHAR(255) = ''
+DECLARE @Namespace VARCHAR(255) = ''
 
+-- Context name (By default: Database name if not specified)
 -- Starting script:
 IF LEN(@ContextName) = 0
     SELECT @ContextName = TABLE_CATALOG FROM INFORMATION_SCHEMA.COLUMNS
+
+IF LEN(@Namespace) = 0
+	SELECT @Namespace = @ContextName + '.Models'
 
 -- Header.
 PRINT 'using System;'
@@ -58,15 +63,17 @@ PRINT 'using System.ComponentModel.DataAnnotations.Schema;'
 PRINT ''
 
 -- Start generate namespace.
-PRINT 'namespace ' + @ContextName + '.Models'
+PRINT 'namespace ' + @Namespace
 PRINT '{'
 
 -- Start generate context class.
 print '    public class ' + @ContextName + 'Context : DbContext {'
 print '        public ' + @ContextName + 'Context() : base("DefaultConnection") {}'
 print ''
+
 -- Add DbSet fields.
-DECLARE @TableName VARCHAR(255);
+DECLARE @CountSameForeignKeyReference INT
+DECLARE @TableName VARCHAR(255)
 DECLARE MY_CURSOR_FOR_TABLE CURSOR 
   LOCAL STATIC READ_ONLY FORWARD_ONLY
 FOR
@@ -89,7 +96,7 @@ BEGIN
         @TableName != 'VersionInfo' -- Used by FluentMigrator
     BEGIN
         -- Add DbSet for current table.
-        PRINT '        public DbSet<' + REPLACE(@TableName, ' ', '') + @tableSuffix + '> ' + REPLACE(@TableName, ' ', '') + ' { get; set; }'
+        PRINT '        public DbSet<' + REPLACE(@TableName, ' ', '') + @tableSuffix + '> ' + REPLACE(@TableName, ' ', '') + @dbSetSuffix + ' { get; set; }'
     END
     FETCH NEXT FROM MY_CURSOR_FOR_TABLE INTO @TableName
 END
@@ -110,21 +117,45 @@ DECLARE @isColumnNullable BIT
 DECLARE MY_CURSOR_FOR_FOREIGN_KEY CURSOR 
   LOCAL STATIC READ_ONLY FORWARD_ONLY
 FOR
-	SELECT
-		OBJECT_NAME(f.parent_object_id) AS TableName,
-		COL_NAME(fc.parent_object_id, fc.parent_column_id) AS ColumnName,
-		OBJECT_NAME (f.referenced_object_id) AS ReferenceTableName,
-		COL_NAME(fc.referenced_object_id, fc.referenced_column_id) AS ReferenceColumnName,
-		(
-			SELECT is_nullable
-			FROM sys.columns
-			WHERE object_id=object_id(OBJECT_NAME(f.parent_object_id))
-				AND name = COL_NAME(fc.parent_object_id, fc.parent_column_id)) AS is_nullable
-	FROM sys.foreign_keys AS f
-	INNER JOIN sys.foreign_key_columns AS fc
-	ON f.OBJECT_ID = fc.constraint_object_id
+	-- CTE to get the foreign key relationships
+	WITH [ForeignKeyInfo]
+	AS
+	(
+		SELECT
+			OBJECT_NAME(f.parent_object_id) AS TableName,
+			COL_NAME(fc.parent_object_id, fc.parent_column_id) AS ColumnName,
+			OBJECT_NAME (f.referenced_object_id) AS ReferenceTableName,
+			COL_NAME(fc.referenced_object_id, fc.referenced_column_id) AS ReferenceColumnName,
+			(
+				SELECT is_nullable
+				FROM sys.columns
+				WHERE object_id=object_id(OBJECT_NAME(f.parent_object_id))
+					AND name = COL_NAME(fc.parent_object_id, fc.parent_column_id)) AS is_nullable
+		FROM sys.foreign_keys AS f
+		INNER JOIN sys.foreign_key_columns AS fc
+		ON f.OBJECT_ID = fc.constraint_object_id
+	),
+	-- CTE to get the foreign key relationship and count the same foreign key reference
+	[ForeignKeyCompleteInfo]
+	AS
+	(
+		SELECT
+			*,
+			(
+				SELECT
+					COUNT(1)
+				FROM [ForeignKeyInfo] i
+				WHERE
+					o.ReferenceTableName = i.ReferenceTableName AND
+					o.ReferenceColumnName = i.ReferenceColumnName AND
+					o.TableName = i.TableName
+				GROUP BY ReferenceTableName, ReferenceColumnName
+			) AS CountSameForeignKeyReference
+		FROM [ForeignKeyInfo] o
+	)
+	SELECT * FROM [ForeignKeyCompleteInfo]
 OPEN MY_CURSOR_FOR_FOREIGN_KEY
-FETCH NEXT FROM MY_CURSOR_FOR_FOREIGN_KEY INTO @TableName, @ColumnName, @ReferenceTableName, @ReferenceColumnName, @isColumnNullable
+FETCH NEXT FROM MY_CURSOR_FOR_FOREIGN_KEY INTO @TableName, @ColumnName, @ReferenceTableName, @ReferenceColumnName, @isColumnNullable, @CountSameForeignKeyReference
 WHILE @@FETCH_STATUS = 0
 BEGIN
     -- Ignore some tables
@@ -147,14 +178,17 @@ BEGIN
     BEGIN
         PRINT ''
 		PRINT '            modelBuilder.Entity<' + REPLACE(@ReferenceTableName, ' ', '') + @tableSuffix + '>()'
-		PRINT '                .HasMany(m => m.Linked' + REPLACE(@TableName, ' ', '') + ')'
+		IF @CountSameForeignKeyReference = 1
+			PRINT '                .HasMany(m => m.Linked' + REPLACE(@TableName, ' ', '') + ')'
+		ELSE
+			PRINT '                .HasMany(m => m.Linked' + REPLACE(@TableName, ' ', '') + 'BasedOn' + REPLACE(REPLACE(@ColumnName, 'ID', ''), 'Id', '') + ')'
 		IF @isColumnNullable = 0
 			PRINT '                .WithRequired(m => m.' + REPLACE(REPLACE(@ColumnName, 'ID', ''), 'Id', '') + ')'
 		ELSE
 			PRINT '                .WithOptional(m => m.' + REPLACE(REPLACE(@ColumnName, 'ID', ''), 'Id', '') + ')'
 		PRINT '                .HasForeignKey(m => m.' + @ColumnName + ');'
     END
-    FETCH NEXT FROM MY_CURSOR_FOR_FOREIGN_KEY INTO  @TableName, @ColumnName, @ReferenceTableName, @ReferenceColumnName, @isColumnNullable
+    FETCH NEXT FROM MY_CURSOR_FOR_FOREIGN_KEY INTO  @TableName, @ColumnName, @ReferenceTableName, @ReferenceColumnName, @isColumnNullable, @CountSameForeignKeyReference
 END
 CLOSE MY_CURSOR_FOR_FOREIGN_KEY
 DEALLOCATE MY_CURSOR_FOR_FOREIGN_KEY
@@ -287,23 +321,45 @@ BEGIN
         DECLARE MY_CURSOR_FOR_FOREIGN_KEY CURSOR 
 		  LOCAL STATIC READ_ONLY FORWARD_ONLY
 		FOR
-			SELECT
-				OBJECT_NAME(f.parent_object_id) AS TableName,
-				COL_NAME(fc.parent_object_id, fc.parent_column_id) AS ColumnName,
-				OBJECT_NAME (f.referenced_object_id) AS ReferenceTableName,
-				COL_NAME(fc.referenced_object_id, fc.referenced_column_id) AS ReferenceColumnName,
-				(
-					SELECT is_nullable
-					FROM sys.columns
-					WHERE object_id=object_id(OBJECT_NAME(f.parent_object_id))
-						AND name = COL_NAME(fc.parent_object_id, fc.parent_column_id)) AS is_nullable
-			FROM sys.foreign_keys AS f
-			INNER JOIN sys.foreign_key_columns AS fc
-			ON f.OBJECT_ID = fc.constraint_object_id
-			WHERE OBJECT_NAME(f.parent_object_id) = @TableName
-				OR OBJECT_NAME (f.referenced_object_id) = @TableName
+			-- CTE to get the foreign key relationships
+			WITH [ForeignKeyInfo]
+			AS
+			(
+				SELECT
+					OBJECT_NAME(f.parent_object_id) AS TableName,
+					COL_NAME(fc.parent_object_id, fc.parent_column_id) AS ColumnName,
+					OBJECT_NAME (f.referenced_object_id) AS ReferenceTableName,
+					COL_NAME(fc.referenced_object_id, fc.referenced_column_id) AS ReferenceColumnName,
+					(
+						SELECT is_nullable
+						FROM sys.columns
+						WHERE object_id=object_id(OBJECT_NAME(f.parent_object_id))
+							AND name = COL_NAME(fc.parent_object_id, fc.parent_column_id)) AS is_nullable
+				FROM sys.foreign_keys AS f
+				INNER JOIN sys.foreign_key_columns AS fc
+				ON f.OBJECT_ID = fc.constraint_object_id
+			),
+			-- CTE to get the foreign key relationship and count the same foreign key reference
+			[ForeignKeyCompleteInfo]
+			AS
+			(
+				SELECT
+					*,
+					(
+						SELECT
+							COUNT(1)
+						FROM [ForeignKeyInfo] i
+						WHERE
+							o.ReferenceTableName = i.ReferenceTableName AND
+							o.ReferenceColumnName = i.ReferenceColumnName AND
+							o.TableName = i.TableName
+						GROUP BY ReferenceTableName, ReferenceColumnName
+					) AS CountSameForeignKeyReference
+				FROM [ForeignKeyInfo] o
+			)
+			SELECT * FROM [ForeignKeyCompleteInfo]
 		OPEN MY_CURSOR_FOR_FOREIGN_KEY
-		FETCH NEXT FROM MY_CURSOR_FOR_FOREIGN_KEY INTO @TableName2, @ColumnName, @ReferenceTableName, @ReferenceColumnName, @isColumnNullable
+		FETCH NEXT FROM MY_CURSOR_FOR_FOREIGN_KEY INTO @TableName2, @ColumnName, @ReferenceTableName, @ReferenceColumnName, @isColumnNullable, @CountSameForeignKeyReference
 		WHILE @@FETCH_STATUS = 0
 		BEGIN
 			-- Ignore some tables
@@ -325,11 +381,16 @@ BEGIN
 				@ReferenceTableName != 'VersionInfo' -- Used by FluentMigrator
 			BEGIN
 				IF @ReferenceTableName = @TableName
-					PRINT '        public virtual ICollection<' + REPLACE(@TableName2, ' ', '') + @tableSuffix + '> Linked' + REPLACE(@TableName2, ' ', '') + ' { get; set; }'
+				BEGIN
+					IF @CountSameForeignKeyReference = 1
+						PRINT '        public virtual ICollection<' + REPLACE(@TableName2, ' ', '') + @tableSuffix + '> Linked' + REPLACE(@TableName2, ' ', '') + ' { get; set; }'
+					ELSE
+						PRINT '        public virtual ICollection<' + REPLACE(@TableName2, ' ', '') + @tableSuffix + '> Linked' + REPLACE(@TableName2, ' ', '') + 'BasedOn' + REPLACE(REPLACE(@ColumnName, 'ID', ''), 'Id', '') + ' { get; set; }'
+				END
 	            IF @TableName2 = @TableName
 		            PRINT '        public virtual ' + REPLACE(@ReferenceTableName, ' ', '') + @tableSuffix + ' ' + REPLACE(REPLACE(@ColumnName, 'ID', ''), 'Id', '') + ' { get; set; }'
 			END
-			FETCH NEXT FROM MY_CURSOR_FOR_FOREIGN_KEY INTO  @TableName2, @ColumnName, @ReferenceTableName, @ReferenceColumnName, @isColumnNullable
+			FETCH NEXT FROM MY_CURSOR_FOR_FOREIGN_KEY INTO  @TableName2, @ColumnName, @ReferenceTableName, @ReferenceColumnName, @isColumnNullable, @CountSameForeignKeyReference
 		END
 		CLOSE MY_CURSOR_FOR_FOREIGN_KEY
 		DEALLOCATE MY_CURSOR_FOR_FOREIGN_KEY
