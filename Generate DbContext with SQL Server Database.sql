@@ -67,7 +67,7 @@ PRINT 'namespace ' + @Namespace
 PRINT '{'
 
 -- Start generate context class.
-print '    public class ' + @ContextName + 'Context : DbContext {'
+print '    public partial class ' + @ContextName + 'Context : DbContext {'
 print '        public ' + @ContextName + 'Context() : base("DefaultConnection") {}'
 print ''
 
