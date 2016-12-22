@@ -241,10 +241,14 @@ BEGIN
         	@COLUMN_NAME, @DATA_TYPE, @CHARACTER_MAXIMUM_LENGTH, @IS_NULLABLE
         WHILE @@FETCH_STATUS = 0
         BEGIN
+            DECLARE @IsPK BIT = 0
             -- By convention: TableName + Id = Key.
             If @COLUMN_NAME = @TableName + 'Id'
-                PRINT '        [Key]'
+                SET @IsPK = 1
             If @COLUMN_NAME = 'Id'
+                SET @IsPK = 1
+            
+            IF @IsPK = 1
                 PRINT '        [Key]'
             
             -- DATA_TYPE = varchar or nvarchar = String
@@ -300,10 +304,17 @@ BEGIN
             If @IS_NULLABLE = 'YES' AND @DATA_TYPE != 'string' AND @DATA_TYPE != 'byte[]'
                 SET @DATA_TYPE = @DATA_TYPE + '?'
             
+            DECLARE @IsIdentityField BIT = 0
+            SELECT @IsIdentityField = 1
+				FROM sys.tables AS t
+				JOIN sys.identity_columns c ON t.object_id = c.object_id
+				where t.name = @TableName AND c.name = @COLUMN_NAME
+            If 1 = @IsIdentityField AND @IsPK = 0
+				PRINT '        [DatabaseGeneratedAttribute(DatabaseGeneratedOption.Identity)]'
+            
             -- Add the [Required] where non nullable field,
             -- not the primary key by convention.
-            If @IS_NULLABLE = 'NO' AND NOT @COLUMN_NAME = @TableName + 'Id'
-            		AND NOT @COLUMN_NAME = 'Id'
+            If @IsIdentityField = 0 AND (@IS_NULLABLE = 'NO' AND NOT @COLUMN_NAME = @TableName + 'Id' AND NOT @COLUMN_NAME = 'Id')
                 PRINT '        [Required]'
             
             -- Add the field.
