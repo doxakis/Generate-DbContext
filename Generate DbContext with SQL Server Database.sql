@@ -36,6 +36,8 @@ Limitations:
 	- Foreign key column end with Id or ID
 	- Many to 1 are the only supported relationship. (1 to 1 can be simulated with Many to 1)
 	- Most data type are supported.
+	- SQL Views must have a unique Id field (Entity Framework need a primary key)
+	(You can generate a random Id with: NEWID())
 */
 
 -- Options:
@@ -60,6 +62,7 @@ PRINT 'using System.Web;'
 PRINT 'using System.Data.Entity;'
 PRINT 'using System.ComponentModel.DataAnnotations;'
 PRINT 'using System.ComponentModel.DataAnnotations.Schema;'
+PRINT 'using System.Data.Entity.ModelConfiguration;'
 PRINT ''
 
 -- Start generate namespace.
@@ -79,7 +82,6 @@ DECLARE MY_CURSOR_FOR_TABLE CURSOR
 FOR
 SELECT DISTINCT TABLE_NAME
 FROM INFORMATION_SCHEMA.COLUMNS
-WHERE OBJECTPROPERTY(OBJECT_ID(TABLE_CATALOG + '.' + TABLE_SCHEMA + '.' + TABLE_NAME), 'IsView') = 0
 OPEN MY_CURSOR_FOR_TABLE
 FETCH NEXT FROM MY_CURSOR_FOR_TABLE INTO @TableName
 WHILE @@FETCH_STATUS = 0
@@ -96,7 +98,9 @@ BEGIN
         @TableName != 'VersionInfo' -- Used by FluentMigrator
     BEGIN
         -- Add DbSet for current table.
-        PRINT '        public DbSet<' + REPLACE(@TableName, ' ', '') + @tableSuffix + '> ' + REPLACE(@TableName, ' ', '') + @dbSetSuffix + ' { get; set; }'
+        SET @TableName = REPLACE(@TableName, 'V_', '')
+        SET @TableName = REPLACE(@TableName, ' ', '')
+        PRINT '        public DbSet<' + @TableName + @tableSuffix + '> ' + @TableName + @dbSetSuffix + ' { get; set; }'
     END
     FETCH NEXT FROM MY_CURSOR_FOR_TABLE INTO @TableName
 END
@@ -108,6 +112,28 @@ PRINT ''
 PRINT '        protected override void OnModelCreating(DbModelBuilder modelBuilder)'
 PRINT '        {'
 PRINT '            base.OnModelCreating(modelBuilder);'
+PRINT ''
+PRINT '            // SQL Views'
+PRINT ''
+
+DECLARE MY_CURSOR_FOR_TABLE CURSOR 
+  LOCAL STATIC READ_ONLY FORWARD_ONLY
+FOR
+SELECT DISTINCT TABLE_NAME
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE OBJECTPROPERTY(OBJECT_ID(TABLE_CATALOG + '.' + TABLE_SCHEMA + '.' + TABLE_NAME), 'IsView') = 1
+OPEN MY_CURSOR_FOR_TABLE
+FETCH NEXT FROM MY_CURSOR_FOR_TABLE INTO @TableName
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	SET @TableName = REPLACE(@TableName, 'V_', '')
+    SET @TableName = REPLACE(@TableName, ' ', '')
+	PRINT '            modelBuilder.Configurations.Add(new ' + @TableName + 'ViewConfiguration());'
+	FETCH NEXT FROM MY_CURSOR_FOR_TABLE INTO @TableName
+END
+CLOSE MY_CURSOR_FOR_TABLE
+DEALLOCATE MY_CURSOR_FOR_TABLE
+
 PRINT ''
 PRINT '            // Navigation properties based on foreign keys'
 DECLARE @ColumnName VARCHAR(255)
@@ -203,7 +229,6 @@ DECLARE MY_CURSOR_FOR_TABLE CURSOR
 FOR
 SELECT DISTINCT TABLE_NAME
 FROM INFORMATION_SCHEMA.COLUMNS
-WHERE OBJECTPROPERTY(OBJECT_ID(TABLE_CATALOG + '.' + TABLE_SCHEMA + '.' + TABLE_NAME), 'IsView') = 0
 OPEN MY_CURSOR_FOR_TABLE
 FETCH NEXT FROM MY_CURSOR_FOR_TABLE INTO @TableName
 WHILE @@FETCH_STATUS = 0
@@ -221,7 +246,8 @@ BEGIN
     BEGIN
         -- Start generate table class.
         print '    [Table("' + @TableName + '")]'
-        print '    public partial class ' + REPLACE(@TableName, ' ', '') + @tableSuffix + ''
+		
+        print '    public partial class ' + REPLACE(REPLACE(@TableName, ' ', ''), 'V_', '') + @tableSuffix + ''
         PRINT '    {'
         
         -- Populate Fields.
@@ -415,6 +441,29 @@ END
 CLOSE MY_CURSOR_FOR_TABLE
 DEALLOCATE MY_CURSOR_FOR_TABLE
 -- End generate table class.
+
+DECLARE MY_CURSOR_FOR_TABLE CURSOR 
+  LOCAL STATIC READ_ONLY FORWARD_ONLY
+FOR
+SELECT DISTINCT TABLE_NAME
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE OBJECTPROPERTY(OBJECT_ID(TABLE_CATALOG + '.' + TABLE_SCHEMA + '.' + TABLE_NAME), 'IsView') = 1
+OPEN MY_CURSOR_FOR_TABLE
+FETCH NEXT FROM MY_CURSOR_FOR_TABLE INTO @TableName
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	PRINT '    public class ' + REPLACE(REPLACE(@TableName, ' ', ''), 'V_', '') + 'ViewConfiguration : EntityTypeConfiguration<' + REPLACE(REPLACE(@TableName, ' ', ''), 'V_', '') + 'Model>'
+	PRINT '    {'
+	PRINT '        public ' + REPLACE(REPLACE(@TableName, ' ', ''), 'V_', '') + 'ViewConfiguration()'
+	PRINT '        {'
+	PRINT '            this.HasKey(t => t.Id);'
+	PRINT '	           this.ToTable("' + @TableName + '", "dbo");'
+	PRINT '        }'
+	PRINT '    }'
+	FETCH NEXT FROM MY_CURSOR_FOR_TABLE INTO @TableName
+END
+CLOSE MY_CURSOR_FOR_TABLE
+DEALLOCATE MY_CURSOR_FOR_TABLE
 
 PRINT '}'
 -- End generate namespace.
