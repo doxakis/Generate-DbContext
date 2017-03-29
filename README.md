@@ -23,6 +23,7 @@ Foreign key:
 - Most data type are supported.
 - When there are at least two foreign keys from the same table pointing to the same table the generated navigation properties use a different naming convention.
 	- It will be: Linked[table name]BasedOn[Foreign key: field name without "Id" term] instead of Linked[table name] because in c# there will be fields with the exact same name.
+- SQL Views must have a unique Id field (Entity Framework need a primary key) (You can generate a random Id with: NEWID())
 
 ## Copyright and license
 Code released under the MIT license.
